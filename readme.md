@@ -4,9 +4,11 @@ Microbiome Visualizer เป็นคลาส Python ที่ออกแบ�
 
 ## ข้อมูล
 - สูตรคำนวน Relative Abundance:
+
 $$
 \text{Relative Abundance} = \frac{\text{Abundance of a specific taxon}}{\text{Total abundance of all taxa in the sample}} \times 100
 $$
+
 - dataset : feature_table.csv
 
 
