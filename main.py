@@ -14,10 +14,9 @@ class MicrobiomeVisualizer:
         
     def _parse_taxonomy(self, target_rank):
         """
-        จัดกลุ่มตาม Rank ที่เลือก:
-        - ถ้าระดับนั้นมีชื่อใช้งานได้ → ใช้ชื่อนั้น
-        - ถ้าระบุไม่ได้ (Incertae_Sedis / uncultured / unknown / __ / ฯลฯ)
-          → ยุบรวมเป็น 'Unclassified' (ไม่ fallback ไประดับสูงกว่า)
+        จัดการชื่อ Taxonomy ตามเงื่อนไข:
+        1. รวมกลุ่มข้อมูลตาม Rank ที่เลือก
+        2. ถ้าชื่อเป็น unknown/uncultured ให้ใช้ Rank สูงกว่าแทน
         """
         target_rank = target_rank.lower()
         rank_map = {'d': 0, 'p': 1, 'c': 2, 'o': 3, 'f': 4, 'g': 5, 's': 6}
@@ -28,19 +27,17 @@ class MicrobiomeVisualizer:
         else:
             rank_idx = rank_map.get(target_rank[0], 5)
 
-        invalid = {'', 'incertae_sedis', 'unknown', 'uncultured', 'unassigned'}
         taxa_mapping = {}
         for col in self.taxa_cols:
             parts = col.split(';')
-            if rank_idx >= len(parts):
-                taxa_mapping[col] = 'Unclassified'
-                continue
-            part = parts[rank_idx].strip()
-            val = part[3:] if len(part) > 3 and part[1:3] == '__' else part
-            if val.lower() in invalid or part.endswith('__'):
-                taxa_mapping[col] = 'Unclassified'
-            else:
-                taxa_mapping[col] = part
+            name = 'Unknown'
+            for i in range(min(rank_idx, len(parts) - 1), -1, -1):
+                part = parts[i].strip()
+                val = part[3:] if len(part) > 3 and part[1:3] == '__' else part
+                if val.lower() not in ['', 'incertae_sedis', 'unknown', 'uncultured', 'unassigned'] and not part.endswith('__'):
+                    name = part
+                    break
+            taxa_mapping[col] = name
 
         return taxa_mapping
 
