@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 
+
 class MicrobiomeVisualizer:
     def __init__(self, file_path):
         """โหลดข้อมูลและเตรียมโครงสร้างเบื้องต้น"""
@@ -203,14 +204,43 @@ class MicrobiomeVisualizer:
         plt.savefig(f"{filename}.{file_format}", bbox_inches='tight')
         plt.close('all')
         
-    def bubble_plot(self, taxonomic_rank='genus', percent_cutoff=2.0,
-                           file_format='tiff', filename='bubble'):
-        """ฟังก์ชันสำหรับสร้าง Bubble Plot"""
+    def bubble_plot(self, taxonomic_rank='genus', percent_cutoff=2.0):
+
+        # STEP 1: เตรียม data
+        df = self.get_abundance_matrix(taxonomic_rank, percent_cutoff)
+
+        # STEP 2: reshape
+        df_long = df.reset_index().melt(
+            id_vars='index',
+            var_name='Taxa',
+            value_name='Abundance'
+        )
+        df_long.rename(columns={'index': 'Sample'}, inplace=True)
+
+        # STEP 3: plot
+        plt.figure(figsize=(10,6))
+
+        plt.scatter(
+            x=df_long['Sample'],
+            y=df_long['Taxa'],
+            s=df_long['Abundance'] * 30,
+            c=df_long['Abundance'],
+            cmap='viridis',
+            alpha=0.7
+        )
+
+        # STEP 4: layout
+        plt.xlabel("Sample")
+        plt.ylabel("Taxa")
+        plt.title(f"Bubble Plot ({taxonomic_rank})")
+        plt.xticks(rotation=90)
+        plt.tight_layout()
+
         return plt
 
-    def export_bubble_plot(self, taxonomic_rank='genus', percent_cutoff=2.0,
-                           file_format='tiff', filename='bubble'):
-        """ฟังก์ชันสำหรับเซฟ Bubble Plot"""
-        plt = self.bubble_plot()
-        plt.savefig(f"{filename}.{file_format}")
+    
+    def export_bubble_plot(self, taxonomic_rank='genus', percent_cutoff=2.0, ile_format='tiff', filename='bubble'):
+
+        plt = self.bubble_plot(taxonomic_rank, percent_cutoff)
+        plt.savefig(f"{filename}.{file_format}", bbox_inches='tight')
         plt.close()
