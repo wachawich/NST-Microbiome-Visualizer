@@ -101,3 +101,192 @@ visualizer.export_stacked_bar(taxonomic_rank='phylum', percent_cutoff=5.0,
 
 4. **การคืนค่าผลลัพธ์ (Return):**
    * ฟังก์ชันจะคืนค่าออกมาเป็นตารางจับคู่ (Dictionary) ระหว่าง "ชื่อเต็มดั้งเดิม" ชี้ไปยัง "ชื่อใหม่ที่ถูกคัดกรองแล้ว" ผลลัพธ์นี้จะถูกส่งต่อให้ Pandas จัดการทำ Group By รวมกลุ่มที่มีชื่อตรงกันเข้าด้วยกันต่อไป
+
+---
+
+## การทำงานของฟังก์ชัน `get_relative_abundance`
+
+ฟังก์ชัน `get_relative_abundance` ทำหน้าที่ **คำนวณค่า Relative Abundance แล้วยุบรวมข้อมูลตามกลุ่ม Metadata** (เช่น Organic / Chemical) เพื่อเตรียมข้อมูลให้พร้อมสำหรับการพล็อต Stacked Bar Plot
+
+**โค้ดของฟังก์ชัน:**
+```python
+    def get_relative_abundance(self, taxonomic_rank='genus', percent_cutoff=1.0):
+        """คำนวณและเตรียมข้อมูลสำหรับ plot"""
+
+        # Map columns to new taxonomy names
+        taxa_map = self._parse_taxonomy(taxonomic_rank)
+        
+        # Calculate relative abundance per sample
+        df_counts = self.df[self.taxa_cols]
+        df_rel = df_counts.div(df_counts.sum(axis=1), axis=0) * 100
+        
+        # Rename columns and group by new taxonomy
+        df_rel = df_rel.rename(columns=taxa_map)
+        df_rel = df_rel.T.groupby(df_rel.columns).sum().T
+        
+        # Group by metadata (Farm type)
+        df_rel['Group'] = self.df[self.metadata_col]
+        df_grouped = df_rel.groupby('Group').mean()
+        
+        # Apply Cutoff
+        df_final = self._apply_cutoff(df_grouped, percent_cutoff)
+        return df_final
+```
+
+### คำอธิบายการทำงาน (Step-by-Step Logic):
+
+1. **จับคู่ชื่อ Taxonomy ใหม่ (Taxonomy Mapping):**
+   * เรียก `_parse_taxonomy(taxonomic_rank)` เพื่อสร้าง Dictionary ที่จับคู่ "ชื่อ Taxonomy เต็ม" ไปยัง "ชื่อระดับชั้นที่ต้องการ" โดยจัดการ Unknown/Uncultured ให้แล้ว
+
+2. **คำนวณ Relative Abundance ระดับ Sample:**
+   * นำตาราง count `df_counts` มาหารด้วยผลรวมของแต่ละแถว (`df_counts.sum(axis=1)`) แล้วคูณ 100 เพื่อให้ได้ค่าเปอร์เซ็นต์
+   * ผลลัพธ์คือ แต่ละ Sample (แถว) จะมีผลรวม Relative Abundance ของทุก Taxa เท่ากับ 100%
+
+3. **ยุบรวมคอลัมน์ตาม Taxonomy ใหม่ (Group by Taxa):**
+   * ใช้ `.rename(columns=taxa_map)` เปลี่ยนชื่อคอลัมน์เป็นชื่อระดับที่ต้องการ
+   * จากนั้น Transpose แล้วทำ `groupby(...).sum()` เพื่อรวมคอลัมน์ที่มีชื่อตรงกัน (เพราะหลายคอลัมน์อาจถูก map เป็นชื่อเดียวกัน)
+
+4. **ยุบรวมตามกลุ่ม Metadata (Group by Farm Type):**
+   * เพิ่มคอลัมน์ `'Group'` จาก Metadata คอลัมน์สุดท้าย (Organic/Chemical)
+   * ใช้ `.groupby('Group').mean()` เพื่อหาค่าเฉลี่ย Relative Abundance ภายในแต่ละกลุ่ม → ได้ตาราง 1 แถวต่อ 1 กลุ่ม
+
+5. **กรองด้วย Cutoff (Apply Cutoff):**
+   * ส่งต่อให้ `_apply_cutoff` กรอง Taxa ที่มีค่า max ต่ำกว่า `percent_cutoff` แล้วยุบรวมเป็น `'Others'`
+   * ผลลัพธ์สุดท้ายคือ DataFrame ที่แถวเป็นกลุ่ม (Organic/Chemical) และคอลัมน์เป็น Taxa ที่ผ่านเกณฑ์ พร้อมจัดเรียงตามค่าเฉลี่ยจากมากไปน้อย
+
+---
+
+## การทำงานของฟังก์ชัน `get_abundance_matrix`
+
+ฟังก์ชัน `get_abundance_matrix` ทำหน้าที่ **คำนวณค่า Relative Abundance ในระดับ Sample โดยไม่ยุบรวมตามกลุ่ม Metadata** เพื่อให้ได้เมทริกซ์ที่เหมาะกับการพล็อต Heatmap และ Bubble Plot (ที่แกน X จะเป็นชื่อแต่ละ Sample ไม่ใช่กลุ่ม)
+
+**โค้ดของฟังก์ชัน:**
+```python
+    def get_abundance_matrix(self, taxonomic_rank='genus', percent_cutoff=1.0):
+        """เตรียมเมทริกซ์ Relative Abundance ระดับ sample (rows = samples, cols = taxa)"""
+        taxa_map = self._parse_taxonomy(taxonomic_rank)
+
+        df_counts = self.df[self.taxa_cols]
+        df_rel = df_counts.div(df_counts.sum(axis=1), axis=0) * 100
+
+        df_rel = df_rel.rename(columns=taxa_map)
+        df_rel = df_rel.T.groupby(df_rel.columns).sum().T
+
+        if percent_cutoff > 0:
+            keep_taxa = df_rel.columns[df_rel.max() >= percent_cutoff]
+            df_rel = df_rel[keep_taxa]
+
+        sorted_taxa = df_rel.mean().sort_values(ascending=False).index.tolist()
+        return df_rel[sorted_taxa]
+```
+
+### คำอธิบายการทำงาน (Step-by-Step Logic):
+
+1. **จับคู่ชื่อ Taxonomy ใหม่:**
+   * เรียก `_parse_taxonomy` เช่นเดียวกับ `get_relative_abundance` เพื่อให้ชื่อ Taxa ถูกจัดให้อยู่ในระดับที่ต้องการ
+
+2. **คำนวณ Relative Abundance ต่อ Sample:**
+   * หารด้วยผลรวมแถว แล้วคูณ 100 → แต่ละ Sample รวมกันได้ 100%
+
+3. **ยุบรวมคอลัมน์ที่ชื่อตรงกัน:**
+   * Rename + Transpose + `groupby(...).sum()` เพื่อนำคอลัมน์ที่ถูก map เป็นชื่อเดียวกันมารวมกัน
+
+4. **กรองด้วย Cutoff (แบบเก็บราย Sample):**
+   * ต่างจาก `_apply_cutoff` ของ Stacked Bar: ที่นี่ **ไม่มีการสร้างกลุ่ม `'Others'`** แต่ใช้ `df_rel.max() >= percent_cutoff` เพื่อเก็บเฉพาะ Taxa ที่มี Sample อย่างน้อยหนึ่งตัวเกินเกณฑ์ที่กำหนด
+   * วิธีนี้จะทำให้ Heatmap/Bubble Plot ไม่มีแถว Taxa ที่ค่าต่ำเตี้ยทุก Sample (ช่วยลด noise)
+
+5. **เรียงลำดับ Taxa และคืนค่า:**
+   * เรียงคอลัมน์ตามค่าเฉลี่ย Relative Abundance จากมากไปน้อย
+   * คืนค่าเป็น DataFrame โดย **rows = Samples** และ **cols = Taxa**
+
+> หมายเหตุ: เปรียบเทียบกับ `get_relative_abundance` — ตัวนั้นทำ `groupby('Group').mean()` แล้ว apply cutoff + เพิ่ม Others ส่วน `get_abundance_matrix` คงระดับ Sample เอาไว้และตัด Taxa ที่ต่ำกว่าเกณฑ์ทิ้งโดยไม่ยุบเป็น Others
+
+---
+
+## การทำงานของฟังก์ชัน `heatmap`
+
+ฟังก์ชัน `heatmap` ทำหน้าที่ **สร้างแผนภาพ Heatmap แสดงรูปแบบความหนาแน่นของจุลินทรีย์ในแต่ละ Sample** โดยรองรับการปรับสเกล (z-score, log) และการจัดกลุ่มแบบ Hierarchical Clustering พร้อมแสดงแถบสีระบุกลุ่ม Metadata ของแต่ละ Sample
+
+**โค้ดของฟังก์ชัน:**
+```python
+    def heatmap(self, taxonomic_rank='genus', percent_cutoff=1.0, scaling='z-score',
+                clustering=True):
+        """ฟังก์ชันสำหรับสร้าง Heatmap
+        - แกน X = Samples (Farm ID), แกน Y = Taxa
+        - scaling: 'z-score', 'log', หรือ None (ใช้ค่า relative abundance ดิบ)
+        - clustering=True ใช้ seaborn.clustermap เพื่อแสดง dendrogram และจัดกลุ่มแบบ hierarchical
+        """
+        df = self.get_abundance_matrix(taxonomic_rank, percent_cutoff)
+
+        if scaling == 'log':
+            data = np.log1p(df)
+            cbar_label = 'log(1 + Relative Abundance %)'
+            cmap = 'viridis'
+            center = None
+        elif scaling == 'z-score':
+            std = df.std(axis=0).replace(0, 1)
+            data = (df - df.mean(axis=0)) / std
+            cbar_label = 'Z-score (per Taxon)'
+            cmap = 'vlag'
+            center = 0
+        else:
+            data = df.copy()
+            cbar_label = 'Relative Abundance (%)'
+            cmap = 'viridis'
+            center = None
+
+        # transpose ให้ rows = taxa, cols = samples ตามสเปค
+        data_T = data.T
+
+        groups = self.df[self.metadata_col].loc[data.index]
+        unique_groups = sorted(groups.unique())
+        default_palette = {'Organic': '#2ca02c', 'Chemical': '#d62728'}
+        group_palette = {g: default_palette.get(g, c)
+                         for g, c in zip(unique_groups,
+                                         sns.color_palette('Set2', len(unique_groups)))}
+        col_colors = groups.map(group_palette)
+        ...
+```
+
+### คำอธิบายการทำงาน (Step-by-Step Logic):
+
+1. **เตรียมเมทริกซ์ข้อมูล (Data Preparation):**
+   * เรียก `get_abundance_matrix(taxonomic_rank, percent_cutoff)` เพื่อให้ได้ DataFrame ที่ rows = Samples, cols = Taxa
+   * เมทริกซ์นี้ผ่านการคำนวณ Relative Abundance, ยุบรวมตามระดับ Taxonomy, และกรอง Taxa ที่ต่ำกว่า Cutoff มาแล้ว
+
+2. **เลือกวิธีปรับสเกล (Scaling Strategy):**
+   * **`'log'`** : ใช้ `np.log1p(df)` (คือ `log(1 + x)`) เพื่อบีบช่วงค่าที่กว้างให้อ่านง่าย กันปัญหา log(0) ใช้ colormap `'viridis'`
+   * **`'z-score'`** *(ค่าเริ่มต้น)* : คำนวณ z-score ราย Taxon ด้วยสูตร `(x - mean) / std` โดยมีการแทนค่า std ที่เป็น 0 ด้วย 1 เพื่อกัน Division by Zero ใช้ colormap `'vlag'` ที่มีค่ากลางเป็น 0 (เหมาะกับการดู "สูงกว่า/ต่ำกว่าค่าเฉลี่ย")
+   * **`None`** : ใช้ค่า Relative Abundance ดิบ ใช้ colormap `'viridis'`
+
+3. **Transpose เพื่อให้ตรงตามสเปคของภาพ:**
+   * Heatmap ต้องการ rows = Taxa, cols = Samples จึงทำ `data.T` เพื่อสลับแกน
+
+4. **สร้างแถบสีระบุกลุ่ม Metadata (Column Colors):**
+   * ดึงคอลัมน์ Metadata ของแต่ละ Sample (Organic/Chemical) มาจาก `self.df[self.metadata_col]`
+   * กำหนด palette เริ่มต้น `Organic = สีเขียว`, `Chemical = สีแดง` หากมีกลุ่มอื่นจะใช้สีจาก `seaborn.color_palette('Set2', ...)` แทน
+   * ได้ Series `col_colors` ที่จะนำไปวางเป็นแถบสีเหนือ Heatmap
+
+5. **เลือกโหมดการวาด (Clustering vs ไม่ Clustering):**
+   * **`clustering=True`** : ใช้ `sns.clustermap` ซึ่งจะคำนวณ Hierarchical Clustering ทั้งฝั่ง rows (Taxa) และ cols (Samples) แล้วแสดง Dendrogram + จัดเรียง Sample/Taxa ใหม่ตามความใกล้เคียง พร้อมวางแถบ `col_colors` และ Legend ระบุชื่อกลุ่มไว้ด้านบน
+   * **`clustering=False`** : ใช้ `sns.heatmap` ธรรมดา จัดเรียงตามลำดับเดิม (Taxa ถูก sort ตาม mean abundance) เหมาะกับการเทียบ Sample ตามลำดับเดิม
+
+6. **ขนาดภาพแบบยืดหยุ่น (Adaptive Figure Size):**
+   * ความกว้าง = `max(8, 0.6 * จำนวน Sample + 4)` และความสูง = `max(6, 0.25 * จำนวน Taxa + 2)`
+   * ทำให้ภาพไม่อัดแน่นเมื่อมี Sample/Taxa เยอะ และไม่เล็กเกินไปเมื่อมีน้อย
+
+7. **คืนค่า:**
+   * ฟังก์ชันคืน object `plt` (pyplot) ผู้ใช้สามารถนำไป `.show()` ดูบนหน้าจอ หรือใช้ `export_heatmap` เพื่อเซฟเป็นไฟล์ภาพในนามสกุลที่ต้องการได้
+
+### ตัวอย่างการใช้งาน:
+```python
+# Heatmap แบบ z-score พร้อม Hierarchical Clustering (ค่าเริ่มต้น)
+plt_fig = visualizer.heatmap(taxonomic_rank='genus', percent_cutoff=1.0,
+                             scaling='z-score', clustering=True)
+plt_fig.show()
+
+# บันทึก Heatmap แบบ log scale ไม่ทำ Clustering เป็น PNG
+visualizer.export_heatmap(taxonomic_rank='phylum', percent_cutoff=2.0,
+                          scaling='log', clustering=False,
+                          file_format='png', filename='phylum_heatmap')
+```
